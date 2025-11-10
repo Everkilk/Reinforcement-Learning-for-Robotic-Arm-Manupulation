@@ -8,6 +8,8 @@
 import sys
 import math
 from pathlib import Path
+from omegaconf import MISSING
+import gymnasium as gym
 
 # Add the source directory to Python path
 source_dir = Path(__file__).resolve().parent.parent.parent.parent
@@ -224,6 +226,31 @@ class FrankaShadowLiftEnvCfg(ManagerBasedRLEnvCfg):
     episode_length_s = 10.0
     seed = None  # Will be set from command line args
     
+    # Gym space settings (required for Isaac Lab 2.2+)
+    # Isaac Lab 2.2.1 requires explicit space definitions (None not allowed)
+    # Observation space structure (matching ObservationsCfg):
+    # - observation: Box(134,) - concatenated obs (6+6+30+31+31+25=129) + padding = 134
+    # - desired_goal: Box(6,) - target object pose
+    # - achieved_goal: Box(6,) - current object pose  
+    # - meta: Box(3,) - validity flags (invalid_hand, invalid_range, collisions)
+    observation_space = gym.spaces.Dict({
+        "observation": gym.spaces.Box(low=-float('inf'), high=float('inf'), shape=(134,)),
+        "desired_goal": gym.spaces.Box(low=-float('inf'), high=float('inf'), shape=(6,)),
+        "achieved_goal": gym.spaces.Box(low=-float('inf'), high=float('inf'), shape=(6,)),
+        "meta": gym.spaces.Box(low=-float('inf'), high=float('inf'), shape=(3,))
+    })
+    # Action space: Box(30,) - 6 IK commands (DifferentialIK) + 24 finger joints (Shadow Hand)
+    action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(30,))
+    state_space = None  # For asymmetric actor-critic (not used here)
+    num_states = None  # Optional: for asymmetric actor-critic
+    # Deprecated attributes (kept for backward compatibility with Isaac Lab API check)
+    num_actions = 30  # 6 IK commands + 24 finger joints
+    num_observations = 134  # Robot state observations
+    
+    # Noise models (Isaac Lab 2.2+ requirement)
+    action_noise_model = None  # No noise model by default
+    observation_noise_model = None  # No observation noise by default
+    
     def __post_init__(self):
         """Post initialization."""
         # general settings
@@ -253,8 +280,8 @@ class FrankaShadowLiftEnvCfg(ManagerBasedRLEnvCfg):
         
         # rl settings
         self.num_frames = 3
-        self.num_actions = 30  # 6 (arm IK) + 24 (hand joints)
-        self.num_observations = 134  # Updated to match actual observation space
+        # Note: num_actions and num_observations removed (deprecated in Isaac Lab 2.2+)
+        # Spaces are now auto-configured from observations/actions managers
         self.num_goals = 6
         self.num_stages = 2
         self.reward_func = FrankaCudeLiftReward(scale_factor=2.0)  # TĂNG từ 1.0 → 2.0

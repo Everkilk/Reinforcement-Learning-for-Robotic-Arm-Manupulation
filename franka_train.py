@@ -156,14 +156,15 @@ if __name__ == '__main__':
     )
     learner.run(
         epochs=2000,
-        num_cycles=200,
-        num_eval_episodes=100,
-         r_mix=0.3,             
-        num_updates=256,         
+        num_cycles=args_cli.num_cycles,        
+        num_eval_episodes=50,  
+        r_mix=0.5,             
+        num_updates=args_cli.num_updates,       
         batch_size=512,
-        future_p=0.9,            
-        discounted_factor=0.99, 
+        future_p=0.8,                   
+        discounted_factor=0.98,
         clip_return=None,
         n_steps=ENV_CFG.num_frames,
-        step_decay=0.7
+        step_decay=0.7,
+        resume_path=args_cli.resume_path if args_cli.resume_path else ''
     )
