@@ -72,3 +72,8 @@ htmlcov/
 *.temp
 *.bak
 *.orig
+
+# Allow tracking a specific trained policy file (override the global '*.pt' ignore)
+!runs/exp4/
+!runs/exp4/policy/
+!runs/exp4/policy/best_policy.pt
