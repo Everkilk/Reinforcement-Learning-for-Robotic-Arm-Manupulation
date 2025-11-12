@@ -81,3 +81,6 @@ htmlcov/
 # Allow tracking checkpoint folder for experiment exp4
 !runs/exp4/ckpt/
 !runs/exp4/ckpt/**
+
+# Explicitly ignore the very large memory checkpoint
+runs/exp4/ckpt/memory.pt
