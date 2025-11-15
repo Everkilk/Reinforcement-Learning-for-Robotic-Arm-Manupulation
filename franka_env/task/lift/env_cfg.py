@@ -59,14 +59,14 @@ class FrankaShadowLiftSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/robot/.*", 
         update_period=0.0, 
         history_length=6, 
-        debug_vis=True,
+        debug_vis=False,
         force_threshold=10.0
     )
     
     # Base hand frame - tracks the robot base for reference
     base_hand_frame: FrameTransformerCfg = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/robot/fr3_link0",
-        debug_vis=True,  # Disabled to avoid errors during initialization
+        debug_vis=False,  # Disabled to avoid errors during initialization
         visualizer_cfg=VisualizationMarkersCfg(
             prim_path="/World/visuals/base_hand_marker",
             markers={
@@ -91,7 +91,7 @@ class FrankaShadowLiftSceneCfg(InteractiveSceneCfg):
     # Target hand frame - tracks the palm position with offset for grasping
     target_hand_frame: FrameTransformerCfg = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/robot/fr3_link0",
-        debug_vis=True,  # Disabled to avoid errors during initialization
+        debug_vis=False,  # Disabled to avoid errors during initialization
         visualizer_cfg=VisualizationMarkersCfg(
             prim_path="/World/visuals/target_hand_marker",
             markers={
@@ -116,7 +116,7 @@ class FrankaShadowLiftSceneCfg(InteractiveSceneCfg):
     # Fingertip frames - tracks all 5 fingertips for contact detection
     target_finger_frames: FrameTransformerCfg = FrameTransformerCfg(
         prim_path="{ENV_REGEX_NS}/robot/fr3_link0",  # Use a rigid body link as source
-        debug_vis=True,  # Disabled to avoid errors during initialization
+        debug_vis=False,  # Disabled to avoid errors during initialization
         visualizer_cfg=VisualizationMarkersCfg(
             prim_path="/World/visuals/finger_marker",
             markers={
