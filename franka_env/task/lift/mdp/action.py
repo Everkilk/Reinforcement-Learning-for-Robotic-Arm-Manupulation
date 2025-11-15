@@ -15,7 +15,7 @@ class ActionsCfg:
     arm_action: DifferentialInverseKinematicsActionCfg = DifferentialInverseKinematicsActionCfg(
         asset_name="robot",
         joint_names=["fr3_joint[1-7]"],  # Updated to match your USD file
-        body_name="robot0_palm",
+        body_name="robot0_wrist",  # End-effector link name
         controller=DifferentialIKControllerCfg(
             command_type="pose", 
             use_relative_mode=True, 
