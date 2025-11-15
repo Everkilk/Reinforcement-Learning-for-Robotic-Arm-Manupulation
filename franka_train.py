@@ -22,6 +22,8 @@ parser.add_argument("--num-envs", type=int, default=10, help="Number of environm
 parser.add_argument("--num_cycles", type=int, default=200, help="Number of cycles per epoch.")
 parser.add_argument("--num_updates", type=int, default=128, help="Number of gradient updates per cycle.")
 parser.add_argument("--resume_path", type=str, default=None, help="Path to resume training from (e.g., runs/exp4)")
+parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+parser.add_argument("--algo", type=str, default="sac", choices=["sac", "ppo"], help="RL algorithm: 'sac' (off-policy with HER/RHER) or 'ppo' (on-policy, no HER)")
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -45,8 +47,10 @@ from franka_env import ManagerRLGoalEnv, FrankaShadowLiftEnvCfg, FrankaShadowLif
 
 from drl.utils.env_utils import IsaacVecEnv
 from drl.agent.sac import CSAC_GCRL
+from drl.agent.ppo import PPO_GCRL
 from drl.memory.rher import RHERMemory
 from drl.learning.rher import RHER
+from drl.learning.ppo import PPO_Learning
 from drl.utils.optim.adamw import AdamWOptimizer
 from drl.utils.nn.seq import SeqGRUNet
 
@@ -54,7 +58,15 @@ from drl.utils.nn.seq import SeqGRUNet
 if args_cli.task == "lift":
     ENV_CFG_CLASS = FrankaShadowLiftEnvCfg
     ENV_CFG = FrankaShadowLiftEnvCfg()
-    print(f"[INFO] Selected task: LIFT (position only, 2 stages)")
+    
+    # Use dense rewards for PPO, sparse for SAC/DDPG
+    if args_cli.algo == 'ppo':
+        from franka_env.task.lift.mdp.reward_dense import FrankaCudeLiftRewardDense
+        ENV_CFG.reward_func = FrankaCudeLiftRewardDense(scale_factor=1.0)
+        print(f"[INFO] Selected task: LIFT (position only, 2 stages) with DENSE rewards for PPO")
+    else:
+        print(f"[INFO] Selected task: LIFT (position only, 2 stages) with SPARSE rewards for SAC/DDPG")
+        
 elif args_cli.task == "lift_orientation":
     ENV_CFG_CLASS = FrankaShadowLiftOrientationEnvCfg
     ENV_CFG = FrankaShadowLiftOrientationEnvCfg()
@@ -129,6 +141,36 @@ class ValueNetwork(nn.Module):
         return self.net(obs, meta, mask)[batch_idxs, task_idxs].view(-1, 1)
 
 
+class StateValueNetwork(nn.Module):
+    """Value network for PPO - V(s) function without action input."""
+    def __init__(
+        self, 
+        observation_space: gym.spaces.Dict,
+        action_space: gym.spaces.Box
+    ):
+        super().__init__()
+        self.obs_dim = observation_space['observation'].shape[0]
+        self.n_tasks, self.goal_dim = observation_space['desired_goal'].shape
+        
+        self.net = SeqGRUNet(
+            obs_dim=self.obs_dim, 
+            meta_dim=self.goal_dim,  # No action input for V-function
+            out_dim=self.n_tasks,
+            embed_dim=256, num_layers=1,
+            hidden_mlp_dims=[1024, 768, 512],
+            use_norm=True, activation='SiLU' 
+        )
+
+    def forward(self, x: Dict[str, torch.Tensor]) -> torch.Tensor:
+        (obs, mask), meta = x['observation'], x['goal']
+
+        B, device = len(meta), meta.device
+        batch_idxs = torch.arange(B, device=device)
+        task_idxs = x.get('task_id', torch.full((B,), -1, dtype=torch.long, device=device))
+
+        return self.net(obs, meta, mask)[batch_idxs, task_idxs].view(-1, 1)
+
+
 def make_optimizer_fn(params, model_name: str):
     assert model_name in ['actor', 'critic', 'coef'], ValueError(model_name)
     # Increased learning rate for faster initial exploration
@@ -141,43 +183,101 @@ def make_optimizer_fn(params, model_name: str):
     
 
 if __name__ == '__main__':
+    # Set seed for reproducibility
+    import random
+    random.seed(args_cli.seed)
+    np.random.seed(args_cli.seed)
+    torch.manual_seed(args_cli.seed)
+    torch.cuda.manual_seed_all(args_cli.seed)
+    
+    # Create custom environment config class with seed
+    class EnvCfgWithSeed(ENV_CFG_CLASS):
+        def __init__(self):
+            super().__init__()
+            self.seed = args_cli.seed
+    
     envs = IsaacVecEnv(
         manager=ManagerRLGoalEnv,
-        cfg=ENV_CFG_CLASS,  # Pass the class, not the instance
+        cfg=EnvCfgWithSeed,
         num_envs=args_cli.num_envs
     )
-    agent = CSAC_GCRL(
-        make_policy_fn=PolicyNetwork,
-        make_value_fn=ValueNetwork,
-        observation_space=envs.single_observation_space,
-        action_space=envs.single_action_space,
-        make_optimizer_fn=make_optimizer_fn,
-        num_ent_coefs=ENV_CFG.num_stages,
-        device='cuda'
-    )
-    memory = RHERMemory(
-        reward_func=ENV_CFG.reward_func,
-        num_stages=ENV_CFG.num_stages,
-        horizon=int(ENV_CFG.episode_length_s / (ENV_CFG.sim.dt * ENV_CFG.decimation)),
-        max_length=20000,
-        device='cuda'
-    )
-    learner = RHER(
-        envs=envs,
-        agent=agent,
-        memory=memory
-    )
-    learner.run(
-        epochs=2000,
-        num_cycles=args_cli.num_cycles,        
-        num_eval_episodes=50,  
-        r_mix=0.5,             
-        num_updates=args_cli.num_updates,       
-        batch_size=512, 
-        future_p=0.8,                   
-        discounted_factor=0.98,
-        clip_return=None,
-        n_steps=ENV_CFG.num_frames,
-        step_decay=0.7,
-        resume_path=args_cli.resume_path if args_cli.resume_path else ''
-    )
+    
+    # Create agent based on selected algorithm
+    if args_cli.algo == 'sac':
+        print(f"[INFO] Using SAC (Soft Actor-Critic) - off-policy algorithm")
+        agent = CSAC_GCRL(
+            make_policy_fn=PolicyNetwork,
+            make_value_fn=ValueNetwork,  # Q-function for SAC
+            observation_space=envs.single_observation_space,
+            action_space=envs.single_action_space,
+            make_optimizer_fn=make_optimizer_fn,
+            num_ent_coefs=ENV_CFG.num_stages,
+            device='cuda'
+        )
+    elif args_cli.algo == 'ppo':
+        print(f"[INFO] Using PPO (Proximal Policy Optimization) - on-policy algorithm")
+        agent = PPO_GCRL(
+            make_policy_fn=PolicyNetwork,
+            make_value_fn=StateValueNetwork,  # V-function for PPO
+            observation_space=envs.single_observation_space,
+            action_space=envs.single_action_space,
+            make_optimizer_fn=make_optimizer_fn,
+            num_tasks=ENV_CFG.num_stages,
+            device='cuda'
+        )
+    else:
+        raise ValueError(f"Unknown algorithm: {args_cli.algo}")
+    
+    # Create learner based on algorithm
+    if args_cli.algo == 'sac':
+        memory = RHERMemory(
+            reward_func=ENV_CFG.reward_func,
+            num_stages=ENV_CFG.num_stages,
+            horizon=int(ENV_CFG.episode_length_s / (ENV_CFG.sim.dt * ENV_CFG.decimation)),
+            max_length=20000,
+            device='cuda'
+        )
+        learner = RHER(
+            envs=envs,
+            agent=agent,
+            memory=memory
+        )
+        learner.run(
+            epochs=2000,
+            num_cycles=args_cli.num_cycles,        
+            num_eval_episodes=50,  
+            r_mix=0.5,             
+            num_updates=args_cli.num_updates,       
+            batch_size=512, 
+            future_p=0.8,                   
+            discounted_factor=0.98,
+            clip_return=None,
+            n_steps=ENV_CFG.num_frames,
+            step_decay=0.7,
+            resume_path=args_cli.resume_path if args_cli.resume_path else ''
+        )
+    elif args_cli.algo == 'ppo':
+        # PPO uses on-policy learner without replay buffer
+        learner = PPO_Learning(
+            envs=envs,
+            agent=agent,
+            horizon=int(ENV_CFG.episode_length_s / (ENV_CFG.sim.dt * ENV_CFG.decimation)),
+            num_stages=ENV_CFG.num_stages
+        )
+        # For PPO, num_updates controls how many epochs to train on collected data
+        # Typical values: 4-10 epochs
+        num_ppo_epochs = max(1, args_cli.num_updates // 32)  # Scale down from SAC's num_updates
+        print(f"[INFO] PPO will train for {num_ppo_epochs} epochs per cycle")
+        
+        learner.run(
+            epochs=2000,
+            num_cycles=args_cli.num_cycles,
+            num_eval_episodes=50,
+            r_mix=0.5,
+            num_ppo_epochs=num_ppo_epochs,
+            batch_size=512,
+            discounted_factor=0.98,
+            gae_lambda=0.95,  # PPO-specific: GAE parameter
+            resume_path=args_cli.resume_path if args_cli.resume_path else '',
+            reward_func=ENV_CFG.reward_func  # Pass reward function for multi-stage logic
+        )

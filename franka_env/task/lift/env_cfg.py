@@ -39,6 +39,7 @@ from .mdp.common import *
 from .mdp.observation import ObservationsCfg
 from .mdp.action import ActionsCfg
 from .mdp.reward import FrankaCudeLiftReward
+from .mdp.reward_dense import FrankaCudeLiftRewardDense
 from .mdp.command import CommandsCfg
 from .mdp.termination import TerminationsCfg
 from .mdp.events import EventsCfg

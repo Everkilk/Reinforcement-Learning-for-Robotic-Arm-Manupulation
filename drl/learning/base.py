@@ -24,13 +24,14 @@ class RLFrameWork:
         self, 
         envs: VectorizedEnvT,
         agent: AgentT, 
-        memory: MemoryBufferT, 
+        memory: Optional[MemoryBufferT] = None, 
         *,
         compute_metrics: Optional[Callable] = None
     ):
         assert isinstance(envs, (VectorizedEnv, IsaacVecEnv)), TypeError(f'Invalid envs type ({type(envs)})')
         assert isinstance(agent, Agent), TypeError(f'Invalid agent type ({type(agent)}).')
-        assert isinstance(memory, MemoryBuffer), TypeError(f'Invalid memory type ({type(memory)}).')
+        if memory is not None:
+            assert isinstance(memory, MemoryBuffer), TypeError(f'Invalid memory type ({type(memory)}).')
         self.envs = envs
         self.agent = agent
         self.memory = memory
@@ -70,7 +71,8 @@ class RLFrameWork:
     def save_ckpt(self, f: Union[str, Path], running_params: Dict[str, Union[str, bool, int, float]]):
         f = Path(f)
         assert f.exists() and f.is_dir(), EOFError(f'Invalid f path ({f.as_posix()}).')
-        torch.save(obj=self.memory.state_dict(), f=f / 'memory.pt')
+        if self.memory is not None:
+            torch.save(obj=self.memory.state_dict(), f=f / 'memory.pt')
         torch.save(obj=self.agent.state_dict(), f=f / 'agent.pt')
         with open(f / 'running_params.yaml', mode='w') as file:
             yaml.dump(data=running_params, stream=file)
@@ -80,7 +82,8 @@ class RLFrameWork:
     def load_ckpt(self, f: Union[str, Path], running_param_names: Tuple[str, ...]):
         f = Path(f)
         assert f.exists() and f.is_dir(), EOFError(f'Invalid f path ({f.as_posix()}).')
-        self.memory.load_state_dict(torch.load(f=f / 'memory.pt', map_location='cpu', weights_only=False))
+        if self.memory is not None and (f / 'memory.pt').exists():
+            self.memory.load_state_dict(torch.load(f=f / 'memory.pt', map_location='cpu', weights_only=False))
         self.agent.load_state_dict(torch.load(f=f / 'agent.pt', map_location='cpu', weights_only=False))
         with open(f / 'running_params.yaml', mode='r') as file:
             running_params = yaml.full_load(stream=file)
