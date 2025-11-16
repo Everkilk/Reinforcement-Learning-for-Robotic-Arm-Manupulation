@@ -92,6 +92,34 @@ def format_achieved_goals(env: ManagerBasedRLEnv) -> torch.Tensor:
         torch.cat([torch.zeros_like(hand_pos), object_pos], dim=1)
     ], dim=1)  # (2, 6)
 
+def format_single_target_goal(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Format target goals for HER-style training."""
+    return get_command(env) # (n, 3)
+
+def format_single_achieved_goal(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Format achieved goals for HER-style training."""
+    return get_object_position(env) # (n, 3)
+
+
+def format_mt_target_goals(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Format target goals for HER-style training."""
+    target_pos = get_command(env) # (n, 3)
+    object_pos = get_object_position(env) # (n, 3)
+    return torch.stack([
+        torch.cat([object_pos, torch.zeros_like(target_pos)], dim=1),
+        torch.cat([torch.zeros_like(object_pos), target_pos], dim=1)
+    ], dim=1)  # (2, 6)
+
+
+def format_mt_achieved_goals(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Format achieved goals for HER-style training."""
+    hand_pos = get_hand_position(env)  # (n, 3)
+    object_pos = get_object_position(env) # (n, 3)
+    return torch.stack([
+        torch.cat([hand_pos, torch.zeros_like(object_pos)], dim=1),
+        torch.cat([torch.zeros_like(hand_pos), object_pos], dim=1)
+    ], dim=1)  # (2, 6)
+
 
 def get_invalid_hand(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Check if hand is in invalid position (too low)."""
@@ -143,6 +171,58 @@ class ObservationsCfg:
     class AchievedGoalCfg(ObsGroup):
         """Achieved goal for the policy."""
         goals = ObsTerm(func=format_achieved_goals)
+
+        def __post_init__(self):
+            self.enable_corruption = True
+
+    @configclass
+    class MetaCfg(ObsGroup):
+        """Meta information for validity checking."""
+        invalid_hand = ObsTerm(func=get_invalid_hand)  # (1,)
+        invalid_object_range = ObsTerm(func=get_invalid_object_range)  # (1,)
+        collisions = ObsTerm(func=get_dangerous_robot_collisions) # (1,)
+        
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    # Observation groups
+    observation: ObservationCfg = ObservationCfg()
+    desired_goal: DesiredGoalCfg = DesiredGoalCfg()
+    achieved_goal: AchievedGoalCfg = AchievedGoalCfg()
+    meta: MetaCfg = MetaCfg()
+
+@configclass
+class MultiTaskObservationsCfg:
+    """Observation specifications for the MDP."""
+
+    @configclass
+    class ObservationCfg(ObsGroup):
+        """Observations for policy group."""
+
+        object_pose = ObsTerm(func=get_object_pose)  # (6,)
+        hand_pose = ObsTerm(func=get_hand_pose)  # (6,)
+        fingertip_poses = ObsTerm(func=get_fingertip_poses)  # (30,)
+        joint_pos = ObsTerm(func=get_joint_pos_rel)  # (31,) - 7 arm + 24 hand
+        joint_vel = ObsTerm(func=get_joint_vel_rel)  # (31,)
+        last_action = ObsTerm(func=get_last_action)  # (25,) - 6 IK + 19 finger
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    @configclass
+    class DesiredGoalCfg(ObsGroup):
+        """Desired goal for the policy."""
+        goals = ObsTerm(func=format_mt_target_goals)
+
+        def __post_init__(self):
+            self.enable_corruption = True
+
+    @configclass
+    class AchievedGoalCfg(ObsGroup):
+        """Achieved goal for the policy."""
+        goals = ObsTerm(func=format_mt_achieved_goals)
 
         def __post_init__(self):
             self.enable_corruption = True

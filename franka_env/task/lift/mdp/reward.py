@@ -12,6 +12,57 @@ class FrankaCudeLiftReward:
     
     def __init__(self, scale_factor: float = 1.0):
         self.scale_factor = scale_factor
+    
+    def __call__(
+        self, 
+        next_observations: torch.Tensor, 
+        goals: torch.Tensor, 
+        metas: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute rewards for the lift task.
+        
+        Args:
+            next_observations: Current and next observations
+            goals: Target goals - can be (batch, 3) or (batch, num_stages, 3)
+            metas: Meta information for penalties
+        """
+        # Pre-process
+        if isinstance(next_observations, (list, tuple)):
+            next_observations = next_observations[0][:, -1]
+        
+        # Handle multi-stage goals - take the final stage goal
+        if goals.dim() == 3:  # (batch, num_stages, 3)
+            goals = goals[:, -1, :]  # Take last stage
+        elif goals.dim() == 2 and goals.shape[-1] > 3:
+            # Flattened multi-stage goals (batch, num_stages * 3)
+            batch_size = goals.shape[0]
+            num_stages = goals.shape[-1] // 3
+            goals = goals.view(batch_size, num_stages, 3)[:, -1, :]  # Reshape and take last stage
+            
+        # Compute penalty rewards if objects are in invalid ranges
+        # penalty_rewards = (-1.0 - (metas.sum(dim=-1) / metas.size(-1))) if metas is not None else -1.0
+        penalty_rewards = -1.0
+    
+        # Extract observation components
+        object_pos = next_observations[:, :3]
+        distances = (object_pos - goals).norm(dim=-1)
+        terminals = (distances <= 0.03).float()
+        rewards = self.scale_factor * (terminals + penalty_rewards)
+        
+        return rewards, terminals
+
+
+###
+##### REWARD FUNCTION FOR MULTI-TASK SETUP
+###
+
+
+class FrankaCudeMultiTaskLiftReward:
+    """Custom reward function for Franka-Shadow cube lifting multi-task setup."""
+    
+    def __init__(self, scale_factor: float = 1.0):
+        self.scale_factor = scale_factor
         self.object_lengths = torch.tensor([0.06, 0.06, 0.06])
         self.grasp_range = torch.tensor([0.12, 0.12, 0.09])
     

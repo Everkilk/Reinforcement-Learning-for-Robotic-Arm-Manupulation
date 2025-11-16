@@ -36,9 +36,9 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 # Import MDP Configurations
 from .mdp.common import *
-from .mdp.observation import ObservationsCfg
+from .mdp.observation import ObservationsCfg, MultiTaskObservationsCfg
 from .mdp.action import ActionsCfg
-from .mdp.reward import FrankaCudeLiftReward
+from .mdp.reward import FrankaCudeLiftReward, FrankaCudeMultiTaskLiftReward
 from .mdp.reward_dense import FrankaCudeLiftRewardDense
 from .mdp.command import CommandsCfg
 from .mdp.termination import TerminationsCfg
@@ -286,3 +286,77 @@ class FrankaShadowLiftEnvCfg(ManagerBasedRLEnvCfg):
         self.num_goals = 6
         self.num_stages = 2
         self.reward_func = FrankaCudeLiftReward(scale_factor=1.0)
+
+@configclass
+class FrankaShadowMultiTaskLiftEnvCfg(ManagerBasedRLEnvCfg):
+    """Configuration for the Franka-Shadow lift task using manager-based approach."""
+    
+    # Scene settings
+    scene: FrankaShadowLiftSceneCfg = FrankaShadowLiftSceneCfg(num_envs=16, env_spacing=2.5)
+    
+    # MDP settings
+    observations: MultiTaskObservationsCfg = MultiTaskObservationsCfg()
+    actions: ActionsCfg = ActionsCfg()
+    commands: CommandsCfg = CommandsCfg()
+    # Note: Rewards not used in goal-conditioned RL (using custom reward_func instead)
+    # But required by ManagerBasedRLEnvCfg for validation
+    rewards: dict = {}  # Empty dict as placeholder
+    terminations: TerminationsCfg = TerminationsCfg()
+    events: EventsCfg = EventsCfg()
+    
+    # Environment settings
+    decimation = 2
+    episode_length_s = 10.0
+    seed = None  # Will be set from command line args
+    
+    # Gym space settings (required for Isaac Lab 2.2+)
+    # Isaac Lab 2.2.1 requires explicit space definitions (None not allowed)
+    # Observation space structure (matching ObservationsCfg):
+    # - observation: Box(134,) - concatenated obs (6+6+30+31+31+25=129) + padding = 134
+    # - desired_goal: Box(6,) - target object pose
+    # - achieved_goal: Box(6,) - current object pose  
+    # - meta: Box(3,) - validity flags (invalid_hand, invalid_range, collisions)
+    state_space = None  # For asymmetric actor-critic (not used here)
+    num_states = None  # Optional: for asymmetric actor-critic
+    # Deprecated attributes (kept for backward compatibility with Isaac Lab API check)
+    num_actions = 30  # 6 IK commands + 24 finger joints
+    num_observations = 134  # Robot state observations
+    
+    # Noise models (Isaac Lab 2.2+ requirement)
+    action_noise_model = None  # No noise model by default
+    observation_noise_model = None  # No observation noise by default
+    
+    def __post_init__(self):
+        """Post initialization."""
+        # general settings
+        self.decimation = 2
+        self.episode_length_s = 3.2  
+        # simulation settings
+        self.sim.dt = 0.025
+        self.sim.render_interval = self.decimation
+        # max_episode_length = episode_length_s / (dt * decimation) (steps)
+        # select_action_frequency (from rl agent)= 1 / (dt * decimation) (Hz)
+        # frame_per_second (for simulation) = 1 / dt (Hz)
+
+        # physics settings
+        self.sim.physx.bounce_threshold_velocity = 0.2
+        self.sim.physx.bounce_threshold_velocity = 0.01
+        self.sim.physx.friction_correlation_distance = 0.00625
+        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**21 # Reduced by factor 2**(-4)
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 2**17
+        self.sim.physx.gpu_max_rigid_contact_count = 2**19
+        self.sim.physx.gpu_max_rigid_patch_count = 2**13
+        self.sim.physx.gpu_found_lost_pairs_capacity = 2**17
+        self.sim.physx.gpu_collision_stack_size = 2**22
+        self.sim.physx.gpu_heap_capacity = 2**22
+        self.sim.physx.gpu_temp_buffer_capacity = 2**20
+        self.sim.physx.gpu_max_soft_body_contacts = 2**16
+        self.sim.physx.gpu_max_particle_contacts = 2**16
+        
+        # rl settings
+        self.num_frames = 3
+        # Note: num_actions and num_observations removed (deprecated in Isaac Lab 2.2+)
+        # Spaces are now auto-configured from observations/actions managers
+        self.num_goals = 6
+        self.num_stages = 2
+        self.reward_func = FrankaCudeMultiTaskLiftReward(scale_factor=1.0)
