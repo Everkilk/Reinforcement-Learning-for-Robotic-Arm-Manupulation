@@ -1,6 +1,7 @@
 from typing import Sequence
 import torch
 from .common import *
+from .events import OBJECT_NAMES
 
 # Isaac Lab imports
 from isaaclab.utils import configclass
@@ -15,6 +16,68 @@ from isaaclab.markers.config import FRAME_MARKER_CFG
 ###
 ##### COMMAND PART
 ###
+
+def _get_active_object_position(env, env_ids=None):
+    """Helper to get position from the active object for each environment."""
+    if not hasattr(env, 'active_objects'):
+        # Fallback to cube if not initialized
+        return get_object_position_in_robot_root_frame(
+            env=env, env_ids=env_ids,
+            robot_cfg=SceneEntityCfg('robot'), 
+            object_cfg=SceneEntityCfg('cube')
+        )
+    
+    # Gather data from all objects
+    all_positions = []
+    for obj_name in OBJECT_NAMES:
+        pos = get_object_position_in_robot_root_frame(
+            env=env, env_ids=env_ids,
+            robot_cfg=SceneEntityCfg('robot'), 
+            object_cfg=SceneEntityCfg(obj_name)
+        )
+        all_positions.append(pos)
+    
+    # Stack and select based on active_objects
+    stacked = torch.stack(all_positions, dim=0)  # (num_objects, num_envs, 3)
+    
+    # Create index tensor for gathering
+    active_indices = env.active_objects if env_ids is None else env.active_objects[env_ids]
+    indices = active_indices.view(1, -1, 1).expand(1, -1, 3)
+    
+    # Gather the active object data
+    result = torch.gather(stacked, 0, indices).squeeze(0)
+    return result
+
+def _get_active_object_orientation(env, env_ids=None):
+    """Helper to get orientation from the active object for each environment."""
+    if not hasattr(env, 'active_objects'):
+        # Fallback to cube if not initialized
+        return get_object_orientation_in_robot_root_frame(
+            env=env, env_ids=env_ids,
+            robot_cfg=SceneEntityCfg('robot'), 
+            object_cfg=SceneEntityCfg('cube')
+        )
+    
+    # Gather data from all objects
+    all_orientations = []
+    for obj_name in OBJECT_NAMES:
+        ori = get_object_orientation_in_robot_root_frame(
+            env=env, env_ids=env_ids,
+            robot_cfg=SceneEntityCfg('robot'), 
+            object_cfg=SceneEntityCfg(obj_name)
+        )
+        all_orientations.append(ori)
+    
+    # Stack and select based on active_objects
+    stacked = torch.stack(all_orientations, dim=0)  # (num_objects, num_envs, 3)
+    
+    # Create index tensor for gathering
+    active_indices = env.active_objects if env_ids is None else env.active_objects[env_ids]
+    indices = active_indices.view(1, -1, 1).expand(1, -1, 3)
+    
+    # Gather the active object data
+    result = torch.gather(stacked, 0, indices).squeeze(0)
+    return result
 
 class PositionCommand(CommandTerm):
     """Configuration for the command generator."""
@@ -32,7 +95,10 @@ class PositionCommand(CommandTerm):
         # extract the robot and body index for which the command is generated
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.body_idx = self.robot.find_bodies(cfg.body_name)[0][0]
-        self.object: RigidObject = env.scene[cfg.object_name]
+        
+        # Store references to all objects
+        self.objects = {name: env.scene[name] for name in OBJECT_NAMES}
+        
         self.target_ee = env.scene[cfg.target_ee_name]
 
         # create buffers
@@ -83,12 +149,8 @@ class PositionCommand(CommandTerm):
         
         # get current command object pose --------
         pos_command_b = self.command
-        pos_object_b = get_object_position_in_robot_root_frame(
-            env=self._env, robot_cfg=SceneEntityCfg(self.cfg.asset_name), object_cfg=SceneEntityCfg(self.cfg.object_name)
-        )
-        orient_object_b = get_object_orientation_in_robot_root_frame(
-            env=self._env, robot_cfg=SceneEntityCfg(self.cfg.asset_name), object_cfg=SceneEntityCfg(self.cfg.object_name)
-        )
+        pos_object_b = _get_active_object_position(self._env)
+        orient_object_b = _get_active_object_orientation(self._env)
         hand_ee_pos_b = get_hand_pose(env=self._env)[:, :3]
         # update metrics --------------------------
         self.metrics['distance'] = (pos_object_b - pos_command_b).norm(dim=1)
@@ -108,16 +170,8 @@ class PositionCommand(CommandTerm):
         self.pose_command_b[env_ids, 2] = self.pose_command_b[env_ids, 1].uniform_(0.2, 0.35)
 
         # get object positions and orientation
-        self.pre_pos_object_b[env_ids] = get_object_position_in_robot_root_frame(
-            env=self._env, env_ids=env_ids,
-            robot_cfg=SceneEntityCfg('robot'), 
-            object_cfg=SceneEntityCfg('object')
-        )
-        self.pre_orient_object_b[env_ids] = get_object_orientation_in_robot_root_frame(
-            env=self._env, env_ids=env_ids, 
-            robot_cfg=SceneEntityCfg('robot'), 
-            object_cfg=SceneEntityCfg('object')
-        )
+        self.pre_pos_object_b[env_ids] = _get_active_object_position(self._env, env_ids)
+        self.pre_orient_object_b[env_ids] = _get_active_object_orientation(self._env, env_ids)
         
         for metric_name in self.metrics:
             self.metrics[metric_name][env_ids] = 0.0
@@ -137,24 +191,30 @@ class PositionCommand(CommandTerm):
                 # -- current body pose
                 marker_cfg.prim_path = "/Visuals/Command/body_pose"
                 self.body_pose_visualizer = VisualizationMarkers(marker_cfg)
-                # --- object pose
+                # --- object pose markers (one for each object type)
+                self.object_pose_visualizers = {}
+                for obj_name in OBJECT_NAMES:
+                    marker_cfg = FRAME_MARKER_CFG.copy()
+                    marker_cfg.markers["frame"].scale = (0.05, 0.05, 0.05)
+                    marker_cfg.prim_path = f"/Visuals/Command/{obj_name}_pose"
+                    self.object_pose_visualizers[obj_name] = VisualizationMarkers(marker_cfg)
+                # --- end effector pose
                 marker_cfg = FRAME_MARKER_CFG.copy()
                 marker_cfg.markers["frame"].scale = (0.05, 0.05, 0.05)
-                marker_cfg.prim_path = "/Visuals/Command/object_pose"
-                self.object_pose_visualizer = VisualizationMarkers(marker_cfg)
-                # --- end effector pose
                 marker_cfg.prim_path = "/Visuals/Command/ee_pose"
                 self.ee_pose_visualizer = VisualizationMarkers(marker_cfg)
             # set their visibility to true
             self.goal_pose_visualizer.set_visibility(True)
             self.body_pose_visualizer.set_visibility(True)
-            self.object_pose_visualizer.set_visibility(True)
+            for viz in self.object_pose_visualizers.values():
+                viz.set_visibility(True)
             self.ee_pose_visualizer.set_visibility(True)
         else:
             if hasattr(self, "goal_pose_visualizer"):
                 self.goal_pose_visualizer.set_visibility(False)
                 self.body_pose_visualizer.set_visibility(False)
-                self.object_pose_visualizer.set_visibility(False)
+                for viz in self.object_pose_visualizers.values():
+                    viz.set_visibility(False)
                 self.ee_pose_visualizer.set_visibility(False)
     
     def _debug_vis_callback(self, event):
@@ -168,8 +228,10 @@ class PositionCommand(CommandTerm):
         # -- current body pose
         body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
         self.body_pose_visualizer.visualize(body_pose_w[:, :3], body_pose_w[:, 3:7])
-        # --- current object pose
-        self.object_pose_visualizer.visualize(self.object.data.root_pos_w, self.object.data.root_quat_w)
+        # --- current object poses (all objects)
+        for obj_name, viz in self.object_pose_visualizers.items():
+            obj = self.objects[obj_name]
+            viz.visualize(obj.data.root_pos_w, obj.data.root_quat_w)
         # --- current end effector pose
         self.ee_pose_visualizer.visualize(self.target_ee.data.target_pos_w.view(-1, 3), self.target_ee.data.target_quat_w.view(-1, 4))
 
@@ -189,9 +251,6 @@ class CommandsCfg:
         
         body_name: str = 'fr3_link0'
         """Name of the body in the asset for which the commands are generated."""
-
-        object_name: str = 'object'
-        """Name of the object in the environment for which the object are interacted."""
         
         target_ee_name: str = 'target_hand_frame'
         """Name of the target end-effector frame of the asset"""

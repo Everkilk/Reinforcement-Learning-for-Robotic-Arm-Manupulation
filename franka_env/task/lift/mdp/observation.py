@@ -1,4 +1,5 @@
 from .common import *
+from .events import OBJECT_NAMES
 
 # Isaac Lab imports
 from isaaclab.utils import configclass
@@ -10,21 +11,47 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 ##### OBSERVATION FUNCTIONS
 ###
 
+def _get_active_object_data(env: ManagerBasedRLEnv, data_func):
+    """Helper to get data from the active object for each environment."""
+    if not hasattr(env, 'active_objects'):
+        # Fallback to cube if not initialized
+        return data_func(env, 'cube')
+    
+    # Gather data from all objects
+    all_data = []
+    for obj_name in OBJECT_NAMES:
+        all_data.append(data_func(env, obj_name))
+    
+    # Stack and select based on active_objects
+    stacked = torch.stack(all_data, dim=0)  # (num_objects, num_envs, ...)
+    
+    # Create index tensor for gathering
+    indices = env.active_objects.view(1, -1, *([1] * (stacked.dim() - 2)))
+    indices = indices.expand(1, -1, *stacked.shape[2:])
+    
+    # Gather the active object data
+    result = torch.gather(stacked, 0, indices).squeeze(0)
+    return result
+
 def get_object_position(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Get object position in robot root frame."""
-    return get_object_position_in_robot_root_frame(
-        env=env, 
-        robot_cfg=SceneEntityCfg('robot'),
-        object_cfg=SceneEntityCfg('object'),
-    )  # (n, 3)
+    def _get_pos(env, obj_name):
+        return get_object_position_in_robot_root_frame(
+            env=env, 
+            robot_cfg=SceneEntityCfg('robot'),
+            object_cfg=SceneEntityCfg(obj_name),
+        )
+    return _get_active_object_data(env, _get_pos)  # (n, 3)
 
 def get_object_orientation(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Get object orientation in robot root frame."""
-    return get_object_orientation_in_robot_root_frame(
-        env=env, 
-        robot_cfg=SceneEntityCfg('robot'),
-        object_cfg=SceneEntityCfg('object')
-    )  # (n, 3) 
+    def _get_ori(env, obj_name):
+        return get_object_orientation_in_robot_root_frame(
+            env=env, 
+            robot_cfg=SceneEntityCfg('robot'),
+            object_cfg=SceneEntityCfg(obj_name)
+        )
+    return _get_active_object_data(env, _get_ori)  # (n, 3) 
 
 def get_object_pose(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Get object position and orientation in robot root frame."""
@@ -102,11 +129,13 @@ def get_invalid_hand(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 def get_invalid_object_range(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Check if object is outside valid workspace range."""
-    return check_invalid_object_range(
-        env=env, env_ids=None,
-        x_range=(0.1, 0.5), y_range=(-0.2, 0.2), z_thresh=0.05, 
-        asset_cfg=SceneEntityCfg('object')
-    ).view(-1, 1)
+    def _check_range(env, obj_name):
+        return check_invalid_object_range(
+            env=env, env_ids=None,
+            x_range=(0.1, 0.5), y_range=(-0.2, 0.2), z_thresh=0.05, 
+            asset_cfg=SceneEntityCfg(obj_name)
+        )
+    return _get_active_object_data(env, _check_range).view(-1, 1)
 
 def get_dangerous_robot_collisions(env: ManagerBasedRLEnv) -> torch.Tensor:
     return check_collisions(env, threshold=10.0, contact_sensor_cfg=SceneEntityCfg('contact_sensor'))
