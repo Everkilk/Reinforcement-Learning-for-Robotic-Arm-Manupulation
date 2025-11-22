@@ -39,7 +39,7 @@ import gymnasium as gym
 
 from franka_env import ManagerRLGoalEnv, FrankaShadowLiftEnvCfg
 
-from drl.utils.env_utils import IsaacEnv
+from drl.utils.env_utils import IsaacVecEnv
 from drl.agent.sac import CSAC_GCRL
 from drl.memory.rher import RHERMemory
 from drl.learning.rher import RHER
@@ -82,32 +82,37 @@ class PolicyNetwork(nn.Module):
 
 
 if __name__ == '__main__':
-    env = IsaacEnv(
+    envs = IsaacVecEnv(
         manager=ManagerRLGoalEnv,
-        cfg=FrankaShadowLiftEnvCfg
+        cfg=FrankaShadowLiftEnvCfg,
+        num_envs=args_cli.num_envs
     )
     policy = PolicyNetwork(
-        observation_space=env.observation_space,
-        action_space=env.action_space
+        observation_space=envs.single_observation_space,
+        action_space=envs.single_action_space
     )
     # print(env.action_space.shape)
     # input()
-    policy_state_dict = torch.load(r'runs\best_policy\lift\best_policy.pt', map_location='cpu', weights_only=False)
+    policy_state_dict = torch.load(r'C:\isaac-projects\RL_RoboticArm\runs\exp4\policy\best_policy.pt', map_location='cpu', weights_only=False)
     print('Policy Loading: ', policy.load_state_dict(policy_state_dict))
     policy = policy.eval().cuda()
 
-    for _ in range(30):
-        obs = env.reset()[0]
-        done = False
-        while not done:
-
+    for episode in range(30):
+        obs, _ = envs.reset()
+        done = np.zeros(args_cli.num_envs, dtype=bool)
+        step_count = 0
+        
+        while not done.all():
             with torch.no_grad():
                 input_dict = {
-                    'observation': map_structure(lambda x: torch.from_numpy(x).unsqueeze(0).cuda(), obs['observation']),
-                    'goal': torch.from_numpy(obs['desired_goal'][-1]).unsqueeze(0).cuda()
+                    'observation': map_structure(lambda x: torch.from_numpy(x).cuda(), obs['observation']),
+                    'goal': map_structure(lambda x: torch.from_numpy(x[:, -1]).cuda(), obs['desired_goal'])
                 }
-                action = policy(input_dict)[0].squeeze(0).cpu().numpy()
-            obs, reward, terminated, truncated, info = env.step(action)
-            if terminated or truncated:
-                break
-            time.sleep(0.05)
+                actions = policy(input_dict)[0].cpu().numpy()
+            
+            obs, rewards, terminated, truncated, infos = envs.step(actions)
+            done = terminated | truncated
+            step_count += 1
+            time.sleep(0.02)
+        
+        print(f"Episode {episode + 1}/30 completed in {step_count} steps")
