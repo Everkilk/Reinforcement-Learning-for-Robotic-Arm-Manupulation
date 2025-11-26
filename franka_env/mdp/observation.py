@@ -125,7 +125,7 @@ class ObservationsCfg:
         fingertip_poses = ObsTerm(func=get_fingertip_poses)  # (30,)
         joint_pos = ObsTerm(func=get_joint_pos_rel)  # (31,) - 7 arm + 24 hand
         joint_vel = ObsTerm(func=get_joint_vel_rel)  # (31,)
-        last_action = ObsTerm(func=get_last_action)  # (25,) - 6 IK + 19 finger
+        last_action = ObsTerm(func=get_last_action)  # (30,) - 6 IK + 24 finger
 
         def __post_init__(self):
             self.enable_corruption = True
