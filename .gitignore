@@ -1,5 +1,5 @@
 # Exclude training runs and checkpoints
-runs/
+runs/*/ckpt/memory.pt
 
 # Python cache
 __pycache__/
