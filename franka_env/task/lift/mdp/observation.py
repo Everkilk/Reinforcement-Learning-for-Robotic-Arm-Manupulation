@@ -10,21 +10,71 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 ##### OBSERVATION FUNCTIONS
 ###
 
+def get_active_object_name(env: ManagerBasedRLEnv, env_id: int) -> str:
+    """Get the name of the active object for a given environment."""
+    if not hasattr(env, 'active_object_type'):
+        env.active_object_type = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    
+    if env.active_object_type[env_id] == 0:
+        return 'object_cubic'
+    else:
+        return 'object_mustard'
+
+
 def get_object_position(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Get object position in robot root frame."""
-    return get_object_position_in_robot_root_frame(
-        env=env, 
-        robot_cfg=SceneEntityCfg('robot'),
-        object_cfg=SceneEntityCfg('object'),
-    )  # (n, 3)
+    """Get object position in robot root frame for active objects."""
+    if not hasattr(env, 'active_object_type'):
+        env.active_object_type = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    
+    result = torch.zeros(env.num_envs, 3, device=env.device)
+    
+    # Get positions for cubic environments
+    cubic_envs = (env.active_object_type == 0).nonzero(as_tuple=True)[0]
+    if len(cubic_envs) > 0:
+        result[cubic_envs] = get_object_position_in_robot_root_frame(
+            env=env, env_ids=cubic_envs,
+            robot_cfg=SceneEntityCfg('robot'),
+            object_cfg=SceneEntityCfg('object_cubic'),
+        )
+    
+    # Get positions for mustard environments
+    mustard_envs = (env.active_object_type == 1).nonzero(as_tuple=True)[0]
+    if len(mustard_envs) > 0:
+        result[mustard_envs] = get_object_position_in_robot_root_frame(
+            env=env, env_ids=mustard_envs,
+            robot_cfg=SceneEntityCfg('robot'),
+            object_cfg=SceneEntityCfg('object_mustard'),
+        )
+    
+    return result  # (n, 3)
+
 
 def get_object_orientation(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Get object orientation in robot root frame."""
-    return get_object_orientation_in_robot_root_frame(
-        env=env, 
-        robot_cfg=SceneEntityCfg('robot'),
-        object_cfg=SceneEntityCfg('object')
-    )  # (n, 3) 
+    """Get object orientation in robot root frame for active objects."""
+    if not hasattr(env, 'active_object_type'):
+        env.active_object_type = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    
+    result = torch.zeros(env.num_envs, 3, device=env.device)
+    
+    # Get orientations for cubic environments
+    cubic_envs = (env.active_object_type == 0).nonzero(as_tuple=True)[0]
+    if len(cubic_envs) > 0:
+        result[cubic_envs] = get_object_orientation_in_robot_root_frame(
+            env=env, env_ids=cubic_envs,
+            robot_cfg=SceneEntityCfg('robot'),
+            object_cfg=SceneEntityCfg('object_cubic')
+        )
+    
+    # Get orientations for mustard environments
+    mustard_envs = (env.active_object_type == 1).nonzero(as_tuple=True)[0]
+    if len(mustard_envs) > 0:
+        result[mustard_envs] = get_object_orientation_in_robot_root_frame(
+            env=env, env_ids=mustard_envs,
+            robot_cfg=SceneEntityCfg('robot'),
+            object_cfg=SceneEntityCfg('object_mustard')
+        )
+    
+    return result  # (n, 3) 
 
 def get_object_pose(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Get object position and orientation in robot root frame."""
@@ -101,12 +151,31 @@ def get_invalid_hand(env: ManagerBasedRLEnv) -> torch.Tensor:
     return (hand_ee_frame[:, 2] - 0.075 <= 0.0).view(-1, 1)
 
 def get_invalid_object_range(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Check if object is outside valid workspace range."""
-    return check_invalid_object_range(
-        env=env, env_ids=None,
-        x_range=(0.1, 0.5), y_range=(-0.2, 0.2), z_thresh=0.05, 
-        asset_cfg=SceneEntityCfg('object')
-    ).view(-1, 1)
+    """Check if object is outside valid workspace range for active objects."""
+    if not hasattr(env, 'active_object_type'):
+        env.active_object_type = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    
+    result = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    
+    # Check cubic environments
+    cubic_envs = (env.active_object_type == 0).nonzero(as_tuple=True)[0]
+    if len(cubic_envs) > 0:
+        result[cubic_envs] = check_invalid_object_range(
+            env=env, env_ids=cubic_envs,
+            x_range=(0.1, 0.5), y_range=(-0.2, 0.2), z_thresh=0.05, 
+            asset_cfg=SceneEntityCfg('object_cubic')
+        )
+    
+    # Check mustard environments
+    mustard_envs = (env.active_object_type == 1).nonzero(as_tuple=True)[0]
+    if len(mustard_envs) > 0:
+        result[mustard_envs] = check_invalid_object_range(
+            env=env, env_ids=mustard_envs,
+            x_range=(0.1, 0.5), y_range=(-0.2, 0.2), z_thresh=0.05, 
+            asset_cfg=SceneEntityCfg('object_mustard')
+        )
+    
+    return result.view(-1, 1)
 
 def get_dangerous_robot_collisions(env: ManagerBasedRLEnv) -> torch.Tensor:
     return check_collisions(env, threshold=10.0, contact_sensor_cfg=SceneEntityCfg('contact_sensor'))

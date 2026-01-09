@@ -47,38 +47,36 @@ class FrankaCudeLiftReward:
                 
         # Compute extrinsic rewards based on stage
         if stage_id == 0:  # Reach object
-            grasp_range = self.grasp_range.to(encoded_goals.device)
-            object_lengths = self.object_lengths.to(encoded_goals.device)
-            # fingers cannot be too close to each other
-            finger_distances = (
-                (finger_positions.unsqueeze(1) - finger_positions.unsqueeze(2)).norm(dim=-1, p=2)
-            ).permute(1, 2, 0)[torch.triu_indices(5, 5, offset=1).tolist()].permute(1, 0)
-            not_sticky_scores = ((finger_distances[:, :4] / 0.025).clamp(0.0, 1.0).square() - 1.0).mean(dim=-1) \
-                                + ((finger_distances[:, 4:] / 0.01).clamp(0.0, 1.0).square() - 1.0).mean(dim=-1)
-            # fingers should reach the object
-            delta_obj2fingers = torch.stack([
-                math_utils.subtract_frame_transforms(q01=object_quat, t01=object_pos, t02=finger_pos)[0]
-                for finger_pos in finger_positions.permute(1, 0, 2)
-            ], dim=1).clamp(-grasp_range, grasp_range) / object_lengths
-            reach_scores = 1.0 - ((delta_obj2fingers.norm(p=25, dim=-1).clamp(0.5, None) - 0.5) / ((grasp_range / object_lengths).norm(p=25) - 0.5)).sqrt().mean(dim=-1)
-            # fingers should not be too near from the hand
-            delta_hand2fingers = torch.stack([
-                math_utils.subtract_frame_transforms(q01=hand_ee_quat, t01=hand_ee_pos, t02=finger_pos)[0]
-                for finger_pos in finger_positions.permute(1, 0, 2)
-            ], dim=1).clamp(-0.7 * object_lengths, 0.7 * object_lengths) / (0.7 * object_lengths)
-            not_close_scores = delta_hand2fingers.norm(p=25, dim=-1).mean(dim=-1) - 1.0
-            # combine scores to get intrinsic rewards
-            delta_hand2obj = math_utils.subtract_frame_transforms(q01=hand_ee_quat, t01=hand_ee_pos, t02=object_pos)[0]
-            combined_scores = torch.where(
-                condition=(delta_hand2obj.abs() <= grasp_range).all(dim=-1),
-                input=reach_scores, other=not_close_scores
-            ) + not_sticky_scores
-            # determine terminals and task rewards
-            delta_goal = math_utils.subtract_frame_transforms(q01=hand_ee_quat, t01=hand_ee_pos, t02=encoded_goals[:, :3])[0]
-            terminals = (delta_goal.abs() <= object_lengths / 2).all(dim=-1).float()
-            # terminals = ((hand_ee_pos - encoded_goals[:, :3]).norm(dim=-1) <= 0.05).float()
-            task_rewards = terminals + 0.5 * combined_scores
-            # + combined_scores
+            device = hand_ee_pos.device
+            
+            hand_to_obj = object_pos - hand_ee_pos
+            hand_obj_dist = torch.norm(hand_to_obj, dim=-1)
+            finger_obj_dists = torch.norm(object_pos.unsqueeze(1) - finger_positions, dim=-1).sum(dim=-1)
+
+            # Reach reward: Make sure hand gets close to object
+            r_reach = -1.0 * hand_obj_dist - 0.5 * finger_obj_dists
+            r_proximity = torch.where(
+                hand_obj_dist < 0.12,
+                torch.tensor(0.5, device=device),
+                torch.tensor(0.0, device=device)
+            )
+            
+            # Reach reward: Make sure palm facing object
+            hand_to_obj_normalized = hand_to_obj / (hand_obj_dist.unsqueeze(-1) + 1e-6)
+            palm_normal = math_utils.quat_apply(
+                hand_ee_quat,
+                torch.tensor([[0., 0., -1.]], device=device).expand(hand_ee_quat.shape[0], -1)
+            )
+            palm_alignment = (palm_normal * hand_to_obj_normalized).sum(dim=-1)
+            r_palm_facing = torch.where(
+                palm_alignment > 0.3,  
+                0.5 * palm_alignment,
+                torch.tensor(0.0, device=device)
+            )
+            
+            # Terminal condition: distance + palm orientation
+            terminals = ((hand_obj_dist < 0.05) & (palm_alignment > 0.3)).float()
+            task_rewards = r_reach + r_proximity + r_palm_facing + terminals
         elif stage_id == 1:  # Lift to goal
             distances = (object_pos - encoded_goals[:, 3:6]).norm(dim=-1)
             terminals = (distances <= 0.03).float()

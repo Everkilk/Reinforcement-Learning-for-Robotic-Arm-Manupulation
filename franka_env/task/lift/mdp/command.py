@@ -1,6 +1,7 @@
 from typing import Sequence
 import torch
 from .common import *
+from .observation import get_object_position, get_object_orientation, get_hand_pose
 
 # Isaac Lab imports
 from isaaclab.utils import configclass
@@ -32,7 +33,11 @@ class PositionCommand(CommandTerm):
         # extract the robot and body index for which the command is generated
         self.robot: Articulation = env.scene[cfg.asset_name]
         self.body_idx = self.robot.find_bodies(cfg.body_name)[0][0]
-        self.object: RigidObject = env.scene[cfg.object_name]
+        # Store both objects for random selection support
+        self.object_cubic: RigidObject = env.scene['object_cubic']
+        self.object_mustard: RigidObject = env.scene['object_mustard']
+        # Keep backward compatibility - default to cubic
+        self.object: RigidObject = self.object_cubic
         self.target_ee = env.scene[cfg.target_ee_name]
 
         # create buffers
@@ -83,12 +88,9 @@ class PositionCommand(CommandTerm):
         
         # get current command object pose --------
         pos_command_b = self.command
-        pos_object_b = get_object_position_in_robot_root_frame(
-            env=self._env, robot_cfg=SceneEntityCfg(self.cfg.asset_name), object_cfg=SceneEntityCfg(self.cfg.object_name)
-        )
-        orient_object_b = get_object_orientation_in_robot_root_frame(
-            env=self._env, robot_cfg=SceneEntityCfg(self.cfg.asset_name), object_cfg=SceneEntityCfg(self.cfg.object_name)
-        )
+        # Use observation functions that handle active object selection
+        pos_object_b = get_object_position(env=self._env)
+        orient_object_b = get_object_orientation(env=self._env)
         hand_ee_pos_b = get_hand_pose(env=self._env)[:, :3]
         # update metrics --------------------------
         self.metrics['distance'] = (pos_object_b - pos_command_b).norm(dim=1)
@@ -107,17 +109,12 @@ class PositionCommand(CommandTerm):
         self.pose_command_b[env_ids, 1] = self.pose_command_b[env_ids, 1].uniform_(-0.15, 0.15)
         self.pose_command_b[env_ids, 2] = self.pose_command_b[env_ids, 1].uniform_(0.2, 0.35)
 
-        # get object positions and orientation
-        self.pre_pos_object_b[env_ids] = get_object_position_in_robot_root_frame(
-            env=self._env, env_ids=env_ids,
-            robot_cfg=SceneEntityCfg('robot'), 
-            object_cfg=SceneEntityCfg('object')
-        )
-        self.pre_orient_object_b[env_ids] = get_object_orientation_in_robot_root_frame(
-            env=self._env, env_ids=env_ids, 
-            robot_cfg=SceneEntityCfg('robot'), 
-            object_cfg=SceneEntityCfg('object')
-        )
+        # get object positions and orientation using observation functions
+        # that handle active object selection
+        all_pos = get_object_position(env=self._env)
+        all_orient = get_object_orientation(env=self._env)
+        self.pre_pos_object_b[env_ids] = all_pos[env_ids]
+        self.pre_orient_object_b[env_ids] = all_orient[env_ids]
         
         for metric_name in self.metrics:
             self.metrics[metric_name][env_ids] = 0.0
@@ -168,8 +165,26 @@ class PositionCommand(CommandTerm):
         # -- current body pose
         body_pose_w = self.robot.data.body_state_w[:, self.body_idx]
         self.body_pose_visualizer.visualize(body_pose_w[:, :3], body_pose_w[:, 3:7])
-        # --- current object pose
-        self.object_pose_visualizer.visualize(self.object.data.root_pos_w, self.object.data.root_quat_w)
+        # --- current object pose (visualize active objects only)
+        # Get active object data for each environment
+        if hasattr(self._env, 'active_object_type'):
+            # Create combined position and quaternion arrays
+            obj_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+            obj_quat_w = torch.zeros(self.num_envs, 4, device=self.device)
+            
+            cubic_mask = self._env.active_object_type == 0
+            mustard_mask = self._env.active_object_type == 1
+            
+            obj_pos_w[cubic_mask] = self.object_cubic.data.root_pos_w[cubic_mask]
+            obj_quat_w[cubic_mask] = self.object_cubic.data.root_quat_w[cubic_mask]
+            
+            obj_pos_w[mustard_mask] = self.object_mustard.data.root_pos_w[mustard_mask]
+            obj_quat_w[mustard_mask] = self.object_mustard.data.root_quat_w[mustard_mask]
+            
+            self.object_pose_visualizer.visualize(obj_pos_w, obj_quat_w)
+        else:
+            # Fallback to default object if no selection exists
+            self.object_pose_visualizer.visualize(self.object.data.root_pos_w, self.object.data.root_quat_w)
         # --- current end effector pose
         self.ee_pose_visualizer.visualize(self.target_ee.data.target_pos_w.view(-1, 3), self.target_ee.data.target_quat_w.view(-1, 4))
 

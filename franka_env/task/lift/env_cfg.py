@@ -154,9 +154,10 @@ class FrankaShadowLiftSceneCfg(InteractiveSceneCfg):
             ),
         ],  
     )
-    # Option 1: DexCube 
-    object: RigidObjectCfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/object",
+    
+    # Object 0: DexCube 
+    object_cubic: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/object_cubic",
         spawn=UsdFileCfg(
             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
             rigid_props=RigidBodyPropertiesCfg(
@@ -177,51 +178,28 @@ class FrankaShadowLiftSceneCfg(InteractiveSceneCfg):
         ),
     )
     
-    # # Option 2: YCB Mustard Bottle
-    # object: RigidObjectCfg = RigidObjectCfg(
-    #     prim_path="{ENV_REGEX_NS}/object",
-    #     spawn=UsdFileCfg(
-    #         usd_path=str(Path(__file__).parent.parent.parent / "assets" / "Object" / "mustard_bottle.usd"),
-    #         rigid_props=RigidBodyPropertiesCfg(
-    #             kinematic_enabled=False,
-    #             disable_gravity=False,
-    #             enable_gyroscopic_forces=True,
-    #             solver_position_iteration_count=8,
-    #             solver_velocity_iteration_count=0,
-    #             sleep_threshold=0.005,
-    #             stabilization_threshold=0.0025,
-    #             max_depenetration_velocity=1000.0,
-    #         ),
-    #         mass_props=MassPropertiesCfg(mass=0.44),  # 440 grams
-    #         scale=(1.0, 1.0, 1.0),
-    #     ),
-    #     init_state=RigidObjectCfg.InitialStateCfg(
-    #         pos=(0.3, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0)
-    #     ),
-    # )
-    
-    # # Option 3: YCB Drill
-    # object: RigidObjectCfg = RigidObjectCfg(
-    #     prim_path="{ENV_REGEX_NS}/object",
-    #     spawn=UsdFileCfg(
-    #         usd_path=str(Path(__file__).parent.parent.parent / "assets" / "Object" / "drill.usd"),
-    #         rigid_props=RigidBodyPropertiesCfg(
-    #             kinematic_enabled=False,
-    #             disable_gravity=False,
-    #             enable_gyroscopic_forces=True,
-    #             solver_position_iteration_count=8,
-    #             solver_velocity_iteration_count=0,
-    #             sleep_threshold=0.005,
-    #             stabilization_threshold=0.0025,
-    #             max_depenetration_velocity=1000.0,
-    #         ),
-    #         mass_props=MassPropertiesCfg(mass=1.2),  # 1200 grams
-    #         scale=(1.0, 1.0, 1.0),
-    #     ),
-    #     init_state=RigidObjectCfg.InitialStateCfg(
-    #         pos=(0.3, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0)
-    #     ),
-    # )
+    # Object 1: YCB Mustard Bottle
+    object_mustard: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/object_mustard",
+        spawn=UsdFileCfg(
+            usd_path=str(Path(__file__).parent.parent.parent / "assets" / "Object" / "mustard_bottle.usd"),
+            rigid_props=RigidBodyPropertiesCfg(
+                kinematic_enabled=False,
+                disable_gravity=False,
+                enable_gyroscopic_forces=True,
+                solver_position_iteration_count=8,
+                solver_velocity_iteration_count=0,
+                sleep_threshold=0.005,
+                stabilization_threshold=0.0025,
+                max_depenetration_velocity=1000.0,
+            ),
+            mass_props=MassPropertiesCfg(mass=0.44),  # 440 grams
+            scale=(1.0, 1.0, 1.0),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(0.3, 0.0, 0.05), rot=(1.0, 0.0, 0.0, 0.0)
+        ),
+    )
     # ==============================================================
 
     # Environment objects
